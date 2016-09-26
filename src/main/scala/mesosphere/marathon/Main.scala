@@ -87,7 +87,7 @@ class MarathonApp extends App {
     setIfNotDefined("scala.concurrent.context.maxThreads", "64")
     Thread.setDefaultUncaughtExceptionHandler(new UncaughtExceptionHandler {
       override def uncaughtException(thread: Thread, throwable: Throwable): Unit = {
-        log.error(s"Uncaught exception in thread ${thread.getName}:${thread.getId}", throwable)
+        log.error(s"Terminating due to uncaught exception in thread ${thread.getName}:${thread.getId}", throwable)
         CurrentRuntime.asyncExit()(ExecutionContext.global)
       }
     })
