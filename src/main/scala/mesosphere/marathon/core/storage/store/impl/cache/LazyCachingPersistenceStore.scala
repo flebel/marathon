@@ -181,13 +181,15 @@ class LazyCachingPersistenceStore[K, Category, Serialized](
     val category = ir.category
     val storageId = ir.toStorageId(id, None)
     val versionsFuture = lockManager.executeSequentially(category.toString) {
-      if (versionCache.contains((category, storageId))) {
-        Future.successful(versionCache((category, storageId)).asInstanceOf[Seq[OffsetDateTime]])
-      } else {
-        async { // linter:ignore UnnecessaryElseBranch
-          val children = await(store.versions(id).toMat(Sink.seq)(Keep.right).run())
-          versionCache((category, storageId)) = children
-          children
+      lockManager.executeSequentially(storageId.toString) {
+        if (versionCache.contains((category, storageId))) {
+          Future.successful(versionCache((category, storageId)).asInstanceOf[ Seq[ OffsetDateTime ] ])
+        } else {
+          async { // linter:ignore UnnecessaryElseBranch
+            val children = await(store.versions(id).toMat(Sink.seq)(Keep.right).run())
+            versionCache((category, storageId)) = children
+            children
+          }
         }
       }
     }
