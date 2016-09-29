@@ -35,6 +35,8 @@ class LazyCachingPersistenceStore[K, Category, Serialized](
   private val lockManager = LockManager.create()
   private[store] val idCache = TrieMap.empty[Category, Seq[Any]]
   private[store] val valueCache = TrieMap.empty[K, Option[Any]]
+  private[store] val versionCache = TrieMap.empty[(Category, K), Seq[Any]]
+  private[store] val versionedValueCache = TrieMap.empty[(K, OffsetDateTime), Option[Any]]
 
   override def storageVersion(): Future[Option[StorageVersion]] = store.storageVersion()
 
@@ -64,11 +66,12 @@ class LazyCachingPersistenceStore[K, Category, Serialized](
     delete: () => Future[Done])(implicit ir: IdResolver[Id, V, Category, K]): Future[Done] = {
     val category = ir.category
     val storageId = ir.toStorageId(k, None)
-    lockManager.executeSequentially(ir.category.toString) {
+    lockManager.executeSequentially(category.toString) {
       lockManager.executeSequentially(storageId.toString) {
         async { // linter:ignore UnnecessaryElseBranch
           await(delete())
           valueCache.remove(storageId)
+          versionedValueCache.retain { case ((k, version), v) => k != storageId }
           val old = idCache.getOrElse(category, Nil) // linter:ignore UndesirableTypeInference
           val children = old.filter(_ != k) // linter:ignore UndesirableTypeInference
           if (children.nonEmpty) { // linter:ignore UnnecessaryElseBranch+UseIfExpression
@@ -76,6 +79,7 @@ class LazyCachingPersistenceStore[K, Category, Serialized](
           } else {
             idCache.remove(category)
           }
+          versionCache.remove((category, storageId))
           Done
         }
       }
@@ -85,6 +89,7 @@ class LazyCachingPersistenceStore[K, Category, Serialized](
   override def deleteCurrent[Id, V](k: Id)(implicit ir: IdResolver[Id, V, Category, K]): Future[Done] = {
     deleteCurrentOrAll(k, () => store.deleteCurrent(k))
   }
+
   override def deleteAll[Id, V](k: Id)(implicit ir: IdResolver[Id, V, Category, K]): Future[Done] = {
     deleteCurrentOrAll(k, () => store.deleteAll(k))
   }
@@ -111,8 +116,22 @@ class LazyCachingPersistenceStore[K, Category, Serialized](
 
   override def get[Id, V](id: Id, version: OffsetDateTime)(implicit
     ir: IdResolver[Id, V, Category, K],
-    um: Unmarshaller[Serialized, V]): Future[Option[V]] =
-    store.get(id, version)
+    um: Unmarshaller[Serialized, V]): Future[Option[V]] = {
+    val storageId = ir.toStorageId(id, None)
+    lockManager.executeSequentially(storageId.toString) {
+      val cached = versionedValueCache.get((storageId, version)) // linter:ignore OptionOfOption
+      cached match {
+        case Some(v: Option[V] @unchecked) =>
+          Future.successful(v)
+        case _ =>
+          async { // linter:ignore UnnecessaryElseBranch
+            val value = await(store.get(id, version))
+            versionedValueCache.put((storageId, version), value)
+            value
+          }
+      }
+    }
+  }
 
   @SuppressWarnings(Array("all")) // async/await
   override def store[Id, V](id: Id, v: V)(implicit
@@ -127,6 +146,12 @@ class LazyCachingPersistenceStore[K, Category, Serialized](
           valueCache.put(storageId, Some(v))
           val cachedIds = idCache.getOrElse(category, Nil) // linter:ignore UndesirableTypeInference
           idCache.put(category, id +: cachedIds)
+          if (ir.hasVersions) {
+            val version = ir.version(v)
+            versionedValueCache.put((storageId, version), Some(v))
+            val cached = versionCache.getOrElse((category, storageId), Nil) // linter:ignore UndesirableTypeInference
+            versionCache.put((category, storageId), version +: cached)
+          }
           Done
         }
       }
@@ -140,22 +165,39 @@ class LazyCachingPersistenceStore[K, Category, Serialized](
     val category = ir.category
     val storageId = ir.toStorageId(id, None)
     lockManager.executeSequentially(category.toString) {
-      async { // linter:ignore UnnecessaryElseBranch
-        await(store.store(id, v, version))
-        val old = idCache.getOrElse(category, Nil) // linter:ignore UndesirableTypeInference
-        idCache.put(category, id +: old)
-        Done
+      lockManager.executeSequentially(storageId.toString) {
+        async { // linter:ignore UnnecessaryElseBranch
+          await(store.store(id, v, version))
+          versionedValueCache.put((storageId, version), Some(v))
+          val cached = versionCache.getOrElse((category, storageId), Nil) // linter:ignore UndesirableTypeInference
+          versionCache.put((category, storageId), version +: cached)
+          Done
+        }
       }
     }
   }
 
-  override def versions[Id, V](id: Id)(implicit ir: IdResolver[Id, V, Category, K]): Source[OffsetDateTime, NotUsed] =
-    store.versions(id)
+  override def versions[Id, V](id: Id)(implicit ir: IdResolver[Id, V, Category, K]): Source[OffsetDateTime, NotUsed] = {
+    val category = ir.category
+    val storageId = ir.toStorageId(id, None)
+    val versionsFuture = lockManager.executeSequentially(category.toString) {
+      if (versionCache.contains((category, storageId))) {
+        Future.successful(versionCache((category, storageId)).asInstanceOf[Seq[OffsetDateTime]])
+      } else {
+        async { // linter:ignore UnnecessaryElseBranch
+          val children = await(store.versions(id).toMat(Sink.seq)(Keep.right).run())
+          versionCache((category, storageId)) = children
+          children
+        }
+      }
+    }
+    Source.fromFuture(versionsFuture).mapConcat(identity)
+  }
 
   override def deleteVersion[Id, V](
     k: Id,
     version: OffsetDateTime)(implicit ir: IdResolver[Id, V, Category, K]): Future[Done] =
-    store.deleteVersion(k, version)
+    deleteCurrentOrAll(k, () => store.deleteVersion(k, version))
 
   override def toString: String = s"LazyCachingPersistenceStore($store)"
 }
