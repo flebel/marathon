@@ -56,14 +56,15 @@ class LazyCachingPersistenceStoreTest extends AkkaUnitTest
       "purge the cache appropriately" in {
         implicit val clock = new SettableClock()
         val store = newStore
-        for(i <- 1 to 100) {
+        for (i <- 1 to 100) {
           val obj = TestClass1("abc", i)
           clock.plus(1.second)
           store.store("task-1", obj).futureValue should be(Done)
         }
         store.versionedValueCache.size should be(100) // sanity
         store.maybePurgeCachedVersions(toRemove = 10){ () => store.versionedValueCache.size > 50 }
-        store.versionedValueCache.size should be(50)
+        store.versionedValueCache.size > 40 should be(true)
+        store.versionedValueCache.size <= 50 should be(true)
       }
       "caches versions independently" in {
         implicit val clock = new SettableClock()
