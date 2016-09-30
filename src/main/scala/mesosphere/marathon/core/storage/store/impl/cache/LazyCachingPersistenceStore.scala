@@ -155,7 +155,7 @@ class LazyCachingPersistenceStore[K, Category, Serialized](
             val version = ir.version(v)
             versionedValueCache.put((storageId, version), Some(v))
             val cached = versionCache.getOrElse((category, storageId), Nil) // linter:ignore UndesirableTypeInference
-            versionCache.put((category, storageId), version +: cached)
+            versionCache.put((category, storageId), (version +: cached).distinct)
           }
           Done
         }
@@ -175,7 +175,7 @@ class LazyCachingPersistenceStore[K, Category, Serialized](
           await(store.store(id, v, version))
           versionedValueCache.put((storageId, version), Some(v))
           val cached = versionCache.getOrElse((category, storageId), Nil) // linter:ignore UndesirableTypeInference
-          versionCache.put((category, storageId), version +: cached)
+          versionCache.put((category, storageId), (version +: cached).distinct)
           Done
         }
       }

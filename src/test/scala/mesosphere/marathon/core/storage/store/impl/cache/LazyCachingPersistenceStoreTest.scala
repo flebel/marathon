@@ -61,6 +61,7 @@ class LazyCachingPersistenceStoreTest extends AkkaUnitTest
         val updated = TestClass1("def", 2)
         store.store("task-1", original).futureValue should be(Done)
         store.store("task-1", updated).futureValue should be(Done)
+        store.store("task-1", updated).futureValue should be(Done) // redundant store should not lead to dup data
 
         val storageId = ir.toStorageId("task-1", None)
         val cacheKey = (ir.category, storageId)
