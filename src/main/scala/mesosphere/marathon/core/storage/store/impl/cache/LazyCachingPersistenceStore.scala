@@ -1,6 +1,7 @@
 package mesosphere.marathon.core.storage.store.impl.cache
 
 import java.time.OffsetDateTime
+import java.util.concurrent.atomic.AtomicInteger
 
 import akka.http.scaladsl.marshalling.Marshaller
 import akka.http.scaladsl.unmarshalling.Unmarshaller
@@ -153,9 +154,7 @@ class LazyCachingPersistenceStore[K, Category, Serialized](
           idCache.put(category, id +: cachedIds)
           if (ir.hasVersions) {
             val version = ir.version(v)
-            versionedValueCache.put((storageId, version), Some(v))
-            val cached = versionCache.getOrElse((category, storageId), Nil) // linter:ignore UndesirableTypeInference
-            versionCache.put((category, storageId), (version +: cached).distinct)
+            updateCachedVersions(storageId, version, category, v)
           }
           Done
         }
@@ -173,13 +172,33 @@ class LazyCachingPersistenceStore[K, Category, Serialized](
       lockManager.executeSequentially(storageId.toString) {
         async { // linter:ignore UnnecessaryElseBranch
           await(store.store(id, v, version))
-          versionedValueCache.put((storageId, version), Some(v))
-          val cached = versionCache.getOrElse((category, storageId), Nil) // linter:ignore UndesirableTypeInference
-          versionCache.put((category, storageId), (version +: cached).distinct)
+          updateCachedVersions(storageId, version, category, v)
           Done
         }
       }
     }
+  }
+
+  protected[cache] def maybePurgeCachedVersions(toRemove: Int = 500, pRemoval: Double = 0.05)(f: () => Boolean): Unit =
+    while (f()) {
+      // randomly GC the versions
+      val counter = new AtomicInteger
+      versionedValueCache.retain { (k, v) =>
+        val x = scala.util.Random.nextDouble()
+        x > pRemoval || counter.incrementAndGet() > toRemove
+      }
+    }
+
+  protected def updateCachedVersions[V](
+    storageId: K,
+    version: OffsetDateTime,
+    category: Category,
+    v: V): Unit = {
+
+    maybePurgeCachedVersions() { () => versionedValueCache.size > 10000 }
+    versionedValueCache.put((storageId, version), Some(v))
+    val cached = versionCache.getOrElse((category, storageId), Nil) // linter:ignore UndesirableTypeInference
+    versionCache.put((category, storageId), (version +: cached).distinct)
   }
 
   override def versions[Id, V](id: Id)(implicit ir: IdResolver[Id, V, Category, K]): Source[OffsetDateTime, NotUsed] = {

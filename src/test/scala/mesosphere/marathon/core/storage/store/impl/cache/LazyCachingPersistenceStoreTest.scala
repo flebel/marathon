@@ -42,7 +42,7 @@ class LazyCachingPersistenceStoreTest extends AkkaUnitTest
   behave like basicPersistenceStore("LazyCache(Zk)", cachedZk)
   // TODO: Mock out the backing store.
 
-  behave like cachingPersistenceStore("cache internals(Zk)", cachedZk)
+  behave like cachingPersistenceStore("cache internals(InMemory)", cachedInMemory)
 
   def cachingPersistenceStore[K, C, Serialized](
     name: String,
@@ -53,6 +53,18 @@ class LazyCachingPersistenceStoreTest extends AkkaUnitTest
     um: Unmarshaller[Serialized, TestClass1]): Unit = {
 
     name should {
+      "purge the cache appropriately" in {
+        implicit val clock = new SettableClock()
+        val store = newStore
+        for(i <- 1 to 100) {
+          val obj = TestClass1("abc", i)
+          clock.plus(1.second)
+          store.store("task-1", obj).futureValue should be(Done)
+        }
+        store.versionedValueCache.size should be(100) // sanity
+        store.maybePurgeCachedVersions(toRemove = 10){ () => store.versionedValueCache.size > 50 }
+        store.versionedValueCache.size should be(50)
+      }
       "caches versions independently" in {
         implicit val clock = new SettableClock()
         val store = newStore
