@@ -1,7 +1,6 @@
 package mesosphere.marathon.tasks
 
 import mesosphere.marathon.core.base.ConstantClock
-import mesosphere.marathon.core.launcher.impl.TaskOpFactoryImpl
 import mesosphere.marathon.core.launcher.{ TaskOp, TaskOpFactory }
 import mesosphere.marathon.core.task.{ Task, TaskStateOp }
 import mesosphere.marathon.core.task.Task.LocalVolumeId
