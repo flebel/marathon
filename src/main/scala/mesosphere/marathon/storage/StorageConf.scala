@@ -1,6 +1,7 @@
 package mesosphere.marathon.storage
 
 import mesosphere.marathon.ZookeeperConf
+import mesosphere.marathon.core.storage.store.impl.cache.LazyCachingPersistenceStore
 
 trait StorageConf extends ZookeeperConf {
   lazy val internalStoreBackend = opt[String](
@@ -31,5 +32,26 @@ trait StorageConf extends ZookeeperConf {
     default = Some(32),
     hidden = true,
     descr = "Max outstanding requests to Zookeeper persistence"
+  )
+
+  lazy val cacheMaxVersionedValueCacheSize = opt[Int](
+    "cache_max_versioned_value_cache_size",
+    default = Some(LazyCachingPersistenceStore.VersionedValueCacheConfig.Default.maxEntries),
+    hidden = true,
+    descr = "Max number of versioned objects that are lazy cached per-repository"
+  )
+
+  lazy val cachePurgeCountVersionedValuesPerCycle = opt[Int](
+    "cache_purge_count_versioned_values_per_cycle",
+    default = Some(LazyCachingPersistenceStore.VersionedValueCacheConfig.Default.purgeCount),
+    hidden = true,
+    descr = "Upon exceeding cache_max_versioned_value_cache_size, purge this number of objects from the lazy cache"
+  )
+
+  lazy val cachePRemoveFromVersionedValuesCache = opt[Double](
+    "cache_premove_versioned_value",
+    default = Some(LazyCachingPersistenceStore.VersionedValueCacheConfig.Default.pRemove),
+    hidden = true,
+    descr = "Probability that, during a lazy versioned value cache purge, that an entry will be removed"
   )
 }

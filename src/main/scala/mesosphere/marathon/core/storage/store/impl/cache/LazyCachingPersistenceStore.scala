@@ -29,7 +29,8 @@ import scala.concurrent.{ ExecutionContext, Future }
   * @tparam Serialized The serialized format for the persistence store.
   */
 class LazyCachingPersistenceStore[K, Category, Serialized](
-    val store: BasePersistenceStore[K, Category, Serialized])(implicit
+    val store: BasePersistenceStore[K, Category, Serialized],
+    val versionedValueCacheConfig: LazyCachingPersistenceStore.VersionedValueCacheConfig)(implicit
   mat: Materializer,
     ctx: ExecutionContext) extends PersistenceStore[K, Category, Serialized] with StrictLogging {
 
@@ -179,7 +180,9 @@ class LazyCachingPersistenceStore[K, Category, Serialized](
     }
   }
 
-  protected[cache] def maybePurgeCachedVersions(toRemove: Int = 500, pRemoval: Double = 0.05)(f: () => Boolean): Unit =
+  protected[cache] def maybePurgeCachedVersions(
+    toRemove: Int = versionedValueCacheConfig.purgeCount,
+    pRemoval: Double = versionedValueCacheConfig.pRemove)(f: () => Boolean): Unit =
     while (f()) {
       // randomly GC the versions
       val counter = new AtomicInteger
@@ -195,7 +198,7 @@ class LazyCachingPersistenceStore[K, Category, Serialized](
     category: Category,
     v: V): Unit = {
 
-    maybePurgeCachedVersions() { () => versionedValueCache.size > 10000 }
+    maybePurgeCachedVersions() { () => versionedValueCache.size > versionedValueCacheConfig.maxEntries }
     versionedValueCache.put((storageId, version), Some(v))
     val cached = versionCache.getOrElse((category, storageId), Nil) // linter:ignore UndesirableTypeInference
     versionCache.put((category, storageId), (version +: cached).distinct)
@@ -226,4 +229,35 @@ class LazyCachingPersistenceStore[K, Category, Serialized](
     deleteCurrentOrAll(k, () => store.deleteVersion(k, version))
 
   override def toString: String = s"LazyCachingPersistenceStore($store)"
+}
+
+object LazyCachingPersistenceStore {
+
+  def apply[K, Category, Serialized](
+    store: BasePersistenceStore[K, Category, Serialized])(implicit
+    mat: Materializer,
+    ctx: ExecutionContext) = new LazyCachingPersistenceStore(store, VersionedValueCacheConfig.Default)
+
+  case class VersionedValueCacheConfig(
+    val maxEntries: Int = MAX_VERSIONED_VALUE_CACHE_SIZE,
+    val purgeCount: Int = PURGE_COUNT_FROM_VERSIONED_VALUE_CACHE,
+    val pRemove: Double = P_REMOVE_FROM_VERSIONED_VALUE_CACHE
+  )
+
+  object VersionedValueCacheConfig {
+    val Default = VersionedValueCacheConfig()
+  }
+
+  /**
+    * max number of entries allowed in versionedValueCache before entries are purged
+    */
+  val MAX_VERSIONED_VALUE_CACHE_SIZE = 10000
+  /**
+    * max number of entries to remove during cycle of purging versionedValueCache
+    */
+  val PURGE_COUNT_FROM_VERSIONED_VALUE_CACHE = 500
+  /**
+    * probability that, during a purge of versionedValueCache, a given entry will be removed
+    */
+  val P_REMOVE_FROM_VERSIONED_VALUE_CACHE = 0.05
 }
