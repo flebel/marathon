@@ -229,24 +229,20 @@ trait SingleMarathonIntegrationTest
     MarathonHttpHealthCheck(gracePeriod = 20.second, interval = 1.second, maxConsecutiveFailures = 10, portIndex = Some(0)))
 
   def dockerAppProxy(appId: PathId, versionId: String, instances: Int, withHealth: Boolean = true, dependencies: Set[PathId] = Set.empty): AppDefinition = {
-    val targetDirs = sys.env.getOrElse("TARGET_DIRS", "/marathon")
-    val cmd = Some(s"""bash -c 'echo APP PROXY $$MESOS_TASK_ID RUNNING; $appProxyMainInvocationImpl $appId $versionId http://$$HOST:${config.httpPort}/health$appId/$versionId'""")
+    val projectDir = sys.env.getOrElse("PROJECT_DIR", ".")
+    val cmd = Some(s"""bash -c 'echo APP PROXY $$MESOS_TASK_ID RUNNING; python3 /marathon/app_mock.py $$PORT0'""")
     AppDefinition(
       id = appId,
       cmd = cmd,
       container = Some(Container.Docker(
-        image = s"""marathon-buildbase:${sys.env.getOrElse("BUILD_ID", "test")}""",
+        image = "python:3.5",
         network = Some(Protos.ContainerInfo.DockerInfo.Network.HOST),
         volumes = collection.immutable.Seq(
-          new DockerVolume(hostPath = env.getOrElse("IVY2_DIR", "/root/.ivy2"), containerPath = "/root/.ivy2", mode = Protos.Volume.Mode.RO),
-          new DockerVolume(hostPath = env.getOrElse("SBT_DIR", "/root/.sbt"), containerPath = "/root/.sbt", mode = Protos.Volume.Mode.RO),
-          new DockerVolume(hostPath = env.getOrElse("SBT_DIR", "/root/.sbt"), containerPath = "/root/.sbt", mode = Protos.Volume.Mode.RO),
-          new DockerVolume(hostPath = s"""$targetDirs/main""", containerPath = "/marathon/target", mode = Protos.Volume.Mode.RO),
-          new DockerVolume(hostPath = s"""$targetDirs/project""", containerPath = "/marathon/project/target", mode = Protos.Volume.Mode.RO)
+          new DockerVolume(hostPath = s"""$projectDir/src/test/scala/marathon/integration/setup""", containerPath = "/marathon", mode = Protos.Volume.Mode.RO)
         )
       )),
       instances = instances,
-      resources = Resources(cpus = 0.5, mem = 128.0),
+      resources = Resources(cpus = 0.1, mem = 32.0),
       healthChecks = if (withHealth) appProxyHealthChecks else Set.empty[HealthCheck],
       dependencies = dependencies
     )
